@@ -3,8 +3,33 @@
 
 use std::{
     io::{Read, Write},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
+    thread,
 };
+
+fn handle_redis_connection(mut stream: TcpStream) {
+    let remote_addr = stream.peer_addr().unwrap();
+    println!(
+        "accepted new connection from {}",
+        remote_addr
+    );
+    let mut buf: [u8; 1024] = [0; 1024];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(_size) => match stream.write(&"+PONG\r\n".as_bytes()) {
+                Ok(_) => continue,
+                Err(_) => break,
+            },
+            Err(_) => {
+                break;
+            }
+        }
+    }
+    println!(
+        "{} connection closed",
+        remote_addr
+    );
+}
 
 fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -12,19 +37,14 @@ fn main() {
 
     // Uncomment this block to pass the first stage
     //
-    let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:6380").unwrap();
 
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {
-                let mut buf: [u8; 1024] = [0; 1024];
-                match stream.read(&mut buf) {
-                    Ok(_size) => {
-                        stream.write(&"+PONG\r\n".as_bytes()).unwrap();
-                    }
-                    Err(_) => {}
-                }
-                println!("accepted new connection");
+            Ok(stream) => {
+                thread::spawn(|| {
+                    handle_redis_connection(stream);
+                });
             }
             Err(e) => {
                 println!("error: {}", e);
