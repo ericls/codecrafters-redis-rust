@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
+    sync::{Arc, Mutex},
     thread,
 };
 
@@ -19,7 +20,7 @@ macro_rules! extract {
 
 // const SCARY_GLOBAL_HASHMAP: HashMap<String, String> = HashMap::new();
 
-fn handle_redis_connection(mut stream: TcpStream) {
+fn handle_redis_connection(mut stream: TcpStream, store: &Arc<Mutex<HashMap<String, String>>>) {
     let remote_addr = stream.peer_addr().unwrap();
     println!("accepted new connection from {}", remote_addr);
     let mut buf: [u8; 1024] = [0; 1024];
@@ -42,6 +43,21 @@ fn handle_redis_connection(mut stream: TcpStream) {
                             } else if command.to_lowercase() == "set" {
                                 let key = extract!(RESPType::BulkString, args[1]);
                                 let value = extract!(RESPType::BulkString, args[2]);
+                                let mut hash_map = store.lock().unwrap();
+                                hash_map.insert(key.into(), value.into());
+                                stream.write(&RESPType::SimpleString("OK").pack()).unwrap();
+                            } else if command.to_lowercase() == "get" {
+                                let key = extract!(RESPType::BulkString, args[1]);
+                                let hash_map = store.lock().unwrap();
+                                let value = hash_map.get(key);
+                                match value {
+                                    Some(v) => {
+                                        stream.write(&RESPType::BulkString(v).pack()).unwrap();
+                                    }
+                                    _ => {
+                                        stream.write(&RESPType::BulkString("").pack()).unwrap();
+                                    }
+                                }
                             }
                         };
                     }
@@ -66,12 +82,14 @@ fn main() {
     // Uncomment this block to pass the first stage
     //
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
+    let store: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                thread::spawn(|| {
-                    handle_redis_connection(stream);
+                let thread_store = Arc::clone(&store);
+                thread::spawn(move || {
+                    handle_redis_connection(stream, &thread_store);
                 });
             }
             Err(e) => {
