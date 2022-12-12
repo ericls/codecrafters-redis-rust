@@ -76,7 +76,6 @@ impl<'a> RESPType<'a> {
             );
         } else if bytes[0] == b'*' {
             let len_len = take_until_crlf(&bytes[1..]);
-            println!("{}", len_len);
             let num_elements: usize = str::from_utf8(&bytes[1..len_len + 1])
                 .unwrap()
                 .parse()

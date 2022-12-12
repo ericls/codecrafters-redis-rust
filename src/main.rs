@@ -1,10 +1,23 @@
 mod resp;
 use resp::RESPType;
 use std::{
+    collections::HashMap,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     thread,
 };
+
+macro_rules! extract {
+    ($enum:path, $expr:expr) => {{
+        if let $enum(item) = $expr {
+            item
+        } else {
+            panic!()
+        }
+    }};
+}
+
+// const SCARY_GLOBAL_HASHMAP: HashMap<String, String> = HashMap::new();
 
 fn handle_redis_connection(mut stream: TcpStream) {
     let remote_addr = stream.peer_addr().unwrap();
@@ -22,11 +35,13 @@ fn handle_redis_connection(mut stream: TcpStream) {
                                 stream
                                     .write(&RESPType::SimpleString("PONG").pack())
                                     .unwrap();
-                            }
-                            if command.to_lowercase() == "echo" {
+                            } else if command.to_lowercase() == "echo" {
                                 if let RESPType::BulkString(arg0) = args[1] {
                                     stream.write(&RESPType::BulkString(arg0).pack()).unwrap();
                                 };
+                            } else if command.to_lowercase() == "set" {
+                                let key = extract!(RESPType::BulkString, args[1]);
+                                let value = extract!(RESPType::BulkString, args[2]);
                             }
                         };
                     }
