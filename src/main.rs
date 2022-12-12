@@ -5,7 +5,7 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     sync::{Arc, Mutex},
-    thread,
+    thread, time::{SystemTime, UNIX_EPOCH},
 };
 
 macro_rules! extract {
@@ -18,9 +18,14 @@ macro_rules! extract {
     }};
 }
 
+fn now() -> u128 {
+    let n = SystemTime::now();
+    return n.duration_since(UNIX_EPOCH).expect("what").as_millis();
+}
+
 // const SCARY_GLOBAL_HASHMAP: HashMap<String, String> = HashMap::new();
 
-fn handle_redis_connection(mut stream: TcpStream, store: &Arc<Mutex<HashMap<String, String>>>) {
+fn handle_redis_connection(mut stream: TcpStream, store: &Arc<Mutex<HashMap<String, (String, u128, usize)>>>) {
     let remote_addr = stream.peer_addr().unwrap();
     println!("accepted new connection from {}", remote_addr);
     let mut buf: [u8; 1024] = [0; 1024];
@@ -44,7 +49,14 @@ fn handle_redis_connection(mut stream: TcpStream, store: &Arc<Mutex<HashMap<Stri
                                 let key = extract!(RESPType::BulkString, args[1]);
                                 let value = extract!(RESPType::BulkString, args[2]);
                                 let mut hash_map = store.lock().unwrap();
-                                hash_map.insert(key.into(), value.into());
+                                let mut px: usize = 0;
+                                if args.len() == 5 {
+                                    let px_word = extract!(RESPType::BulkString, args[3]);
+                                    assert_eq!(px_word.to_lowercase(), "px");
+                                    let px_value = extract!(RESPType::BulkString, args[4]);
+                                    px = px_value.parse().unwrap();
+                                }
+                                hash_map.insert(key.into(), (value.into(), now(), px));
                                 stream.write(&RESPType::SimpleString("OK").pack()).unwrap();
                             } else if command.to_lowercase() == "get" {
                                 let key = extract!(RESPType::BulkString, args[1]);
@@ -52,10 +64,14 @@ fn handle_redis_connection(mut stream: TcpStream, store: &Arc<Mutex<HashMap<Stri
                                 let value = hash_map.get(key);
                                 match value {
                                     Some(v) => {
-                                        stream.write(&RESPType::BulkString(v).pack()).unwrap();
+                                        let (str_v, added, px) = v;
+                                        if px == &0 || now() < (added + &u128::try_from(px.to_owned()).unwrap()) {
+                                            stream.write(&RESPType::BulkString(&str_v).pack()).unwrap();
+                                        }
+                                        stream.write(b"$-1\r\n").unwrap();
                                     }
                                     _ => {
-                                        stream.write(&RESPType::BulkString("").pack()).unwrap();
+                                        stream.write(b"$-1\r\n").unwrap();
                                     }
                                 }
                             }
@@ -82,7 +98,7 @@ fn main() {
     // Uncomment this block to pass the first stage
     //
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-    let store: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let store: Arc<Mutex<HashMap<String, (String, u128, usize)>>> = Arc::new(Mutex::new(HashMap::new()));
 
     for stream in listener.incoming() {
         match stream {
